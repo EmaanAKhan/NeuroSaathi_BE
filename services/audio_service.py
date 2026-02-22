@@ -1,57 +1,110 @@
-def analyze_audio(audio_file, test_type, language):
-    # TODO: AI/ML guy replaces this with real Gemini call
-    # audio_bytes = audio_file.read()
-    # return gemini_client.analyze(audio_bytes, test_type, language)
+"""
+audio_service.py
 
-    if test_type == "animal_naming":
-        return _mock_animal_naming()
-    elif test_type == "sentence_repetition":
-        return _mock_sentence_repetition()
-    elif test_type == "word_recall":
-        return _mock_word_recall()
-    return _mock_animal_naming()
+Animal Naming Test — Gemini Audio Analysis.
+His exact code from the notebook, adapted for Flask.
 
-def _mock_animal_naming():
-    return {
-        "test_type": "animal_naming",
-        "transcript": "Dog, cat, lion, elephant, horse, zebra, monkey, parrot, fish, rabbit, tiger, cow",
-        "metrics": {
-            "animals_named": ["dog","cat","lion","elephant","horse","zebra","monkey","parrot","fish","rabbit","tiger","cow"],
-            "unique_count": 12,
-            "clustering_detected": True,
-            "hesitation_count": 2,
-            "avg_pause_ms": 1800,
-            "vocal_jitter_detected": False,
-        },
-        "concern_level": "low",
-        "clinical_notes": "12 unique animals. Good semantic clustering. Within normal range."
-    }
+The only difference from his notebook:
+- audio_file.read() replaces open("/content/recording.wav").read()
+- API key comes from .env instead of Colab secrets
+"""
 
-def _mock_sentence_repetition():
-    return {
-        "test_type": "sentence_repetition",
-        "transcript": "I only know that John is the one to help today",
-        "metrics": {
-            "word_accuracy_pct": 92.3,
-            "hesitation_count": 1,
-            "avg_pause_ms": 600,
-            "vocal_jitter_detected": False,
-        },
-        "concern_level": "low",
-        "clinical_notes": "92.3% accuracy. Minor omission. No paraphasias detected."
-    }
+import os
+from werkzeug.datastructures import FileStorage
+from google import genai
+from google.genai import types
+from models.pydantic_models import AudioBiomarkers
 
-def _mock_word_recall():
-    return {
-        "test_type": "word_recall",
-        "transcript": "Apple... table... penny",
-        "metrics": {
-            "words_recalled": 2,
-            "words_total": 3,
-            "word_accuracy_pct": 66.7,
-            "hesitation_count": 3,
-            "avg_pause_ms": 2200,
-        },
-        "concern_level": "moderate",
-        "clinical_notes": "2 of 3 words recalled. Retrieval difficulty noted."
-    }
+
+# ── Gemini client (key loaded from .env file) ─────────────────────────────────
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+# ── Prompt — copied exactly from his notebook ─────────────────────────────────
+ANIMAL_NAMING_PROMPT = """
+ROLE:
+You are a Senior Clinical Neuropsychologist specializing in vocal biomarkers for neurodegenerative diseases. Your expertise is in detecting subtle acoustic and linguistic indicators of Mild Cognitive Impairment (MCI) and Alzheimer's Disease (AD) through Verbal Fluency Tests.
+
+TASK:
+Perform a high-fidelity Acoustic and Semantic Analysis of the provided 60-second audio recording (Animal Naming Test).
+
+CLINICAL GUIDELINES FOR ANALYSIS:
+1. RAW TRANSCRIPT: Transcribe EVERY sound. Do not normalize. If the patient says "Gira... Giraffe," include the "Gira...". Log every "um", "uh", "hmm", and filler.
+2. HESITATIONS: Treat every "um", "uh", and breathy "err" as a significant biomarker of retrieval cost. Precisely timestamp the START of each hesitation.
+3. PAUSES (IEIs): Measure the silence between the end of one animal and the start of the next.
+   - A pause > 2000ms indicates a search effort.
+   - A pause > 5000ms indicates a "Switching" failure in the semantic network.
+4. CLUSTERING: Analyze if animals are retrieved via semantic nodes (e.g., Pet -> Farm -> African Safari).
+5. VOICE QUALITY: Listen for "Micro-tremors" or "Vocal Unsteadiness" (markers for Parkinsonian or motor-speech involvement).
+6. WORD FINDING: Identify "Tip-of-the-tongue" phenomena, false starts, or verbalized frustration.
+
+OUTPUT INSTRUCTIONS:
+Return ONLY a valid JSON object. No intro. No markdown. Use this exact schema:
+
+{
+  "raw_transcript": "string (verbatim including every filler/stutter)",
+  "animals_named": ["string"],
+  "unique_count": integer,
+  "repetitions": integer,
+  "hesitation_count": integer,
+  "hesitation_words": ["string"],
+  "hesitation_timestamps": ["string (e.g., 12s)"],
+  "avg_pause_ms": integer,
+  "longest_pause_ms": integer,
+  "pauses_over_5sec": integer,
+  "clustering_present": boolean,
+  "cluster_groups": ["string"],
+  "word_finding_struggles": integer,
+  "word_finding_examples": ["string"],
+  "voice_tremor_detected": boolean,
+  "speech_clarity": "string (clear/slurred/labored/breathy)"
+}
+"""
+
+
+def analyze_audio(audio_file: FileStorage, test_type: str, language: str) -> dict:
+    """
+    Analyze audio from Animal Naming Test using Gemini.
+
+    Args:
+        audio_file: Audio file received from Flask request
+        test_type:  'animal_naming'
+        language:   'en' | 'ur'
+
+    Returns:
+        dict matching AudioBiomarkers Pydantic model exactly
+    """
+    # Read bytes from uploaded file (replaces his open() call)
+    audio_bytes = audio_file.read()
+
+    # Detect mime type from filename
+    filename = audio_file.filename.lower()
+    if filename.endswith(".mp3"):
+        mime_type = "audio/mp3"
+    elif filename.endswith(".m4a"):
+        mime_type = "audio/m4a"
+    elif filename.endswith(".ogg"):
+        mime_type = "audio/ogg"
+    elif filename.endswith(".webm"):
+        mime_type = "audio/webm"
+    else:
+        mime_type = "audio/wav"
+
+    # Gemini call — exactly from his notebook
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[
+            types.Part.from_bytes(
+                data=audio_bytes,
+                mime_type=mime_type
+            ),
+            ANIMAL_NAMING_PROMPT
+        ],
+        config={
+            "temperature": 0.0,
+            "response_mime_type": "application/json",
+            "response_schema": AudioBiomarkers,
+        }
+    )
+
+    # Returns clean dict — exactly like his model_dump()
+    return response.parsed.model_dump()
